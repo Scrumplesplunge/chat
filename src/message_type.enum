@@ -1,0 +1,8 @@
+# This is the enumeration of all network message types in the chat protocol.
+
+# Message       ID      Description
+IDENTIFY        (0x01)  # Client -> Server. Identifies the user to the server.
+SEND_MESSAGE    (0x02)  # Client -> Server. Send a chat message.
+RECEIVE_MESSAGE (0x03)  # Server -> Client. Receive a chat message.
+REQUEST_HISTORY (0x04)  # Client -> Server. Request previous messages.
+RECEIVE_HISTORY (0x05)  # Server -> Client. Receive previous messages.
