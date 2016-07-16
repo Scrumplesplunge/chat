@@ -2,9 +2,12 @@
 
 #include <map>
 #include <mutex>
+#include <readline/readline.h>
 #include <scrump/args.h>
 #include <scrump/atomic_output.h>
 #include <scrump/color.h>
+#include <sstream>
+#include <string>
 #include <thread>
 #include <unistd.h>
 
@@ -21,16 +24,65 @@ const Color NAME_COLOR = Color::CYAN;
 const Color PROMPT_COLOR = Color::YELLOW;
 const Color ERROR_COLOR = Color::RED;
 
+// Saves input temporarily, allowing output above the input prompt.
+class ReadlineSaver {
+ public:
+  ReadlineSaver() {
+    saved_point_ = rl_point;
+    saved_line_ = rl_copy_text(0, rl_end);
+    rl_save_prompt();
+    rl_replace_line("", 0);
+    rl_redisplay();
+  }
+
+  ~ReadlineSaver() {
+    rl_restore_prompt();
+    rl_replace_line(saved_line_, 0);
+    rl_point = saved_point_;
+    rl_redisplay();
+    free(saved_line_);
+  }
+
+ private:
+  int saved_point_;
+  char* saved_line_;
+};
+
+class Output {
+ public:
+  ~Output() {
+    cout << "\n";
+  }
+
+  template <typename T>
+  Output& operator<<(T value) {
+    cout << value;
+    return *this;
+  }
+
+ private:
+  ReadlineSaver input_saver;
+};
+
 void displayMessage(const ChatMessage& message) {
   switch (message.category) {
     case ChatMessage::NOTICE:
-      aout << NOTICE_COLOR << message.text << Color::RESET << "\n";
+      Output() << NOTICE_COLOR << message.text << Color::RESET;
       break;
     case ChatMessage::CHAT_MESSAGE:
-      aout << NAME_COLOR << message.sender_name << ": " << Color::RESET
-           << message.text << "\n";
+      Output() << NAME_COLOR << message.sender_name << Color::RESET << ": "
+               << message.text;
       break;
   }
+}
+
+char* input(const string& prompt_text) {
+  stringstream prompt;
+  prompt << PROMPT_COLOR << prompt_text << Color::RESET << "> ";
+  char* output = readline(prompt.str().c_str());
+  // Move the cursor back up to the input line and clear it.
+  cout << "\x1B[A;\r\x1B[K;" << flush;
+  return output;
 }
 
 int main(int argc, char* args[]) {
@@ -58,65 +110,19 @@ int main(int argc, char* args[]) {
   }
 
   // Set up the message handlers.
-  mutex message_mutex;
-  uint64_t last_seen = 0;
-  uint64_t new_messages = 0;
-  map<uint64_t, ChatMessage> messages;
-
-  connection.on<RECEIVE_MESSAGE>([&](Message<RECEIVE_MESSAGE>&& message) {
-    uint64_t id = message.message_id;
-
-    unique_lock<mutex> lock(message_mutex);
-    new_messages++;
-    messages.emplace(id, move(message));
-  });
-
-  connection.on<RECEIVE_HISTORY>([&](Message<RECEIVE_HISTORY>&& history) {
-    unique_lock<mutex> lock(message_mutex);
-    for (ChatMessage& message : history.messages) {
-      uint64_t id = message.message_id;
-      messages.emplace(id, move(message));
-    }
+  connection.on<RECEIVE_MESSAGE>([](Message<RECEIVE_MESSAGE>&& message) {
+    displayMessage(message);
   });
 
   // Start the message sending thread.
-  thread input([&] {
-    string line;
+  thread input_thread([&] {
     Message<SEND_MESSAGE> message;
-    aout << PROMPT_COLOR << "[] " << Color::RESET;
-    while (getline(cin, line)) {
-      string command, argument;
-      {
-        auto split = line.find_first_of(" ");
-        if (split == string::npos) {
-          command = line;
-        } else {
-          command = line.substr(0, split);
-          argument = line.substr(split + 1);
-        }
-      }
-      if (command == "m") {
-        // Message.
-        message.text = move(argument);
-        connection.send(message);
-      } else if (command == "v") {
-        // View.
-        unique_lock<mutex> lock(message_mutex);
-        auto i = messages.lower_bound(last_seen + 1);
-        while (i != messages.end()) {
-          displayMessage(i->second);
-          last_seen = i->first;
-          i++;
-        }
-        new_messages = 0;
-      }
-      unique_lock<mutex> lock(message_mutex);
-      if (new_messages > 0) {
-        aout << PROMPT_COLOR << "[" << NOTICE_COLOR << new_messages
-             << PROMPT_COLOR << "] " << Color::RESET;
-      } else {
-        aout << PROMPT_COLOR << "[] " << Color::RESET;
-      }
+    char* line = input(display_name);
+    while (line) {
+      message.text = line;
+      connection.send(message);
+      free(line);
+      line = input(display_name);
     }
   });
 

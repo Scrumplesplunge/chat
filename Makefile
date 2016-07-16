@@ -17,7 +17,7 @@ gen:
 	mkdir gen
 
 bin/client: src/client.cc src/network.cc gen/message_type.cc | bin
-	${CXX} $^ -o $@ ${CXXFLAGS} ${LDFLAGS}
+	${CXX} $^ -o $@ ${CXXFLAGS} -lreadline ${LDFLAGS}
 
 bin/server: src/server.cc src/network.cc gen/message_type.cc | bin
 	${CXX} $^ -o $@ ${CXXFLAGS} -lscrumpmain ${LDFLAGS}
